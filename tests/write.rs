@@ -124,7 +124,6 @@ async fn h38_writes_into_hidden_places_are_not_found_and_change_nothing() {
     let v = TestVault::standard();
     let c = start(&v.root).await;
     let before = files_under(&v.root);
-    let missing = c.err("create_note", json!({"path": "nope/x.md", "content": "c"})).await;
     for p in [
         "secret/new.md",
         "secret/sub/new.md",
@@ -137,7 +136,6 @@ async fn h38_writes_into_hidden_places_are_not_found_and_change_nothing() {
         let e = c.err("create_note", json!({"path": p, "content": "c"})).await;
         assert!(e.to_lowercase().contains("not found"), "{p}: {e}");
         assert!(!e.contains("secret") || p.contains("secret"), "{e}");
-        let _ = &missing;
     }
     for (p, args) in [
         ("secret/hidden-note.md", json!({"append": "x"})),
