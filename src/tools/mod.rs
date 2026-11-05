@@ -6,3 +6,4 @@ pub mod search;
 pub mod tags;
 pub mod write;
 pub mod move_note;
+pub mod move_folder;
