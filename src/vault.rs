@@ -36,9 +36,39 @@ fn clean(relative: &str) -> Result<PathBuf, VaultError> {
     Ok(clean)
 }
 
-/// True for the folders no tool may touch (`.obsidian/`, `.trash/`).
+/// Config file at the vault root. Hidden from every tool.
+pub const CONFIG_FILE: &str = ".mcp-obsidian.toml";
+
+/// Prefix of the temp files `fs_write` creates.
+pub const TEMP_PREFIX: &str = ".mcp-tmp-";
+
+/// True for what no tool may touch: `.obsidian/`, `.trash/`, the config file
+/// at the root and temp files of atomic writes.
 fn always_hidden(relative: &Path) -> bool {
-    matches!(relative.components().next(), Some(Component::Normal(name)) if HIDDEN_FOLDERS.iter().any(|h| name == *h))
+    let mut parts = relative.components().filter_map(|c| match c {
+        Component::Normal(name) => Some(name.to_string_lossy()),
+        _ => None,
+    });
+    let first = parts.next();
+    let first_hidden = first.as_deref().is_some_and(|n| {
+        HIDDEN_FOLDERS.contains(&n) || n.eq_ignore_ascii_case(CONFIG_FILE) && relative.components().count() == 1
+    });
+    first_hidden
+        || first.iter().cloned().chain(parts).any(|n| n.starts_with(TEMP_PREFIX))
+}
+
+/// True when the path names a markdown note.
+pub fn is_note(path: &Path) -> bool {
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("md"))
+}
+
+/// Lowercased path text used to compare against excluded folders.
+fn fold(path: &Path) -> PathBuf {
+    PathBuf::from(path.to_string_lossy().to_lowercase())
+}
+
+fn not_a_note(relative: &str) -> VaultError {
+    VaultError::InvalidPath(format!("only notes can be used here (.md files): {relative}"))
 }
 
 /// Single entry point that turns a tool argument into a filesystem path.
@@ -128,6 +158,18 @@ impl Vault {
         if path.is_file() { Ok(path) } else { Err(VaultError::NotFound(relative.to_string())) }
     }
 
+    /// Like `resolve_file`, and the target must be a `.md` note.
+    pub fn resolve_note(&self, relative: &str) -> Result<PathBuf, VaultError> {
+        let path = self.resolve_file(relative)?;
+        if is_note(&path) { Ok(path) } else { Err(not_a_note(relative)) }
+    }
+
+    /// Like `resolve_for_write`, and the target must be named `*.md`.
+    pub fn resolve_note_for_write(&self, relative: &str) -> Result<PathBuf, VaultError> {
+        let path = self.resolve_for_write(relative)?;
+        if is_note(&path) { Ok(path) } else { Err(not_a_note(relative)) }
+    }
+
     /// Like `resolve`, and the target must be an existing folder.
     pub fn resolve_dir(&self, relative: &str) -> Result<PathBuf, VaultError> {
         let path = self.resolve(relative)?;
@@ -146,8 +188,11 @@ impl Vault {
 
     /// True when a vault-relative path is excluded or hidden (`.obsidian/`, `.trash/`).
     pub fn is_hidden(&self, relative: &Path) -> bool {
-        always_hidden(relative)
-            || self.config.excluded_folders.iter().any(|f| relative.starts_with(f))
+        always_hidden(relative) || {
+            // Entries are stored lowercase (see `Config::load`).
+            let folded = fold(relative);
+            self.config.excluded_folders.iter().any(|f| folded.starts_with(f))
+        }
     }
 
     /// Vault-relative paths of every file, sorted. Excluded folders are listed

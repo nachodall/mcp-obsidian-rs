@@ -4,7 +4,6 @@ use serde::Deserialize;
 
 use crate::error::ToolError;
 use crate::index::Hit;
-use crate::output::truncate_with_notice;
 use crate::server::Server;
 
 /// Most matching lines shown per note.
@@ -54,7 +53,7 @@ impl Server {
             .index
             .search(&args.query, args.fuzzy.unwrap_or(false), folder.as_deref())
             .map_err(|e| format!("search failed: {e}"))?;
-        Ok(truncate_with_notice(&format_hits(&hits), self.config.max_response_bytes))
+        Ok(format_hits(&hits))
     }
 }
 

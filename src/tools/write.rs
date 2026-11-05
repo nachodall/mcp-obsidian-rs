@@ -44,7 +44,7 @@ impl Server {
 }
 
 pub fn create_note(server: &Server, args: CreateNoteArgs) -> Result<String, ToolError> {
-    let target = server.vault.resolve_for_write(&args.path)?;
+    let target = server.vault.resolve_note_for_write(&args.path)?;
     create_atomic(&target, args.content.as_bytes()).map_err(|e| {
         if e.kind() == std::io::ErrorKind::AlreadyExists {
             ToolError::AlreadyExists(args.path.clone())
@@ -65,8 +65,8 @@ pub fn edit_note(server: &Server, args: EditNoteArgs) -> Result<String, ToolErro
     if modes.iter().filter(|m| **m).count() != 1 {
         return Err("use exactly one mode: old_text+new_text, append, or content+overwrite".into());
     }
-    let target = server.vault.resolve_file(&args.path)?;
-    let current = std::fs::read_to_string(&target).map_err(ToolError::io("write"))?;
+    let target = server.vault.resolve_note(&args.path)?;
+    let current = std::fs::read_to_string(&target).map_err(ToolError::io("read"))?;
     let updated = if let (Some(old), Some(new)) = (&args.old_text, &args.new_text) {
         if old.is_empty() {
             return Err("old_text must not be empty".into());

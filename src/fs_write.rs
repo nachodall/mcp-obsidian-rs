@@ -12,7 +12,7 @@ fn temp_path(path: &Path) -> io::Result<PathBuf> {
         .parent()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no parent"))?;
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    Ok(dir.join(format!(".mcp-tmp-{}-{n}", std::process::id())))
+    Ok(dir.join(format!("{}{}-{n}", crate::vault::TEMP_PREFIX, std::process::id())))
 }
 
 /// Writes the temp file next to `path`. Removes it again on failure.
@@ -36,7 +36,12 @@ fn write_temp(path: &Path, bytes: &[u8]) -> io::Result<PathBuf> {
 /// Replaces an existing file. Creates no folders.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let tmp = write_temp(path, bytes)?;
-    std::fs::rename(&tmp, path).inspect_err(|_| {
+    // Keep the mode of the file being replaced.
+    let kept = match std::fs::metadata(path) {
+        Ok(meta) => std::fs::set_permissions(&tmp, meta.permissions()),
+        Err(_) => Ok(()),
+    };
+    kept.and_then(|()| std::fs::rename(&tmp, path)).inspect_err(|_| {
         let _ = std::fs::remove_file(&tmp);
     })
 }

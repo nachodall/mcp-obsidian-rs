@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::Context;
 use serde::Deserialize;
 
-const CONFIG_FILE: &str = ".mcp-obsidian.toml";
+use crate::vault::CONFIG_FILE;
 
 /// Default response size limit: 50 KB.
 pub const DEFAULT_MAX_RESPONSE_BYTES: usize = 50 * 1024;
@@ -43,8 +43,34 @@ impl Config {
         let raw: RawConfig =
             toml::from_str(&text).with_context(|| format!("invalid {CONFIG_FILE}"))?;
         Ok(Config {
-            excluded_folders: raw.excluded_folders,
+            excluded_folders: raw
+                .excluded_folders
+                .iter()
+                .map(|f| normalize_folder(f))
+                .collect::<anyhow::Result<_>>()
+                .with_context(|| format!("invalid {CONFIG_FILE}: excluded_folders"))?,
             max_response_bytes: raw.max_response_bytes.unwrap_or(DEFAULT_MAX_RESPONSE_BYTES),
         })
     }
+}
+
+/// Normalizes one `excluded_folders` entry: strips `./` and slashes, lowercases
+/// (matching is case-insensitive). Empty, absolute and `..` entries are errors.
+fn normalize_folder(entry: &str) -> anyhow::Result<String> {
+    let path = Path::new(entry);
+    if path.is_absolute() || entry.starts_with('/') || entry.starts_with('\\') {
+        anyhow::bail!("{entry:?} is an absolute path; use a vault-relative folder");
+    }
+    let mut parts = Vec::new();
+    for part in entry.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => anyhow::bail!("{entry:?} must not contain \"..\""),
+            p => parts.push(p),
+        }
+    }
+    if parts.is_empty() {
+        anyhow::bail!("{entry:?} is empty; use a vault-relative folder");
+    }
+    Ok(parts.join("/").to_lowercase())
 }

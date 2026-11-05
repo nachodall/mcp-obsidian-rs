@@ -146,12 +146,12 @@ async fn temp_files_are_hidden() {
 #[tokio::test]
 async fn move_note_output_goes_through_the_size_limit() {
     let v = TestVault::new();
-    v.config("max_response_bytes = 80\n").note("target.md", "# t");
+    v.config("max_response_bytes = 80\n").note("a/target.md", "# t");
     for i in 0..30 {
-        v.note(&format!("refs/note-number-{i:02}.md"), "[[target]]");
+        v.note(&format!("refs/note-number-{i:02}.md"), "[[a/target]]");
     }
     let c = start(&v.root).await;
-    let out = c.ok("move_note", json!({"from": "target.md", "to": "moved/target.md"})).await;
+    let out = c.ok("move_note", json!({"from": "a/target.md", "to": "b/target.md"})).await;
     assert!(out.contains("[truncated"), "{out}");
     assert!(out.len() < 250, "{} bytes", out.len());
 }

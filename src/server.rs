@@ -6,6 +6,7 @@ use rmcp::{ServerHandler, tool_handler};
 
 use crate::config::Config;
 use crate::index::SearchIndex;
+use crate::output::truncate_with_notice;
 use crate::vault::Vault;
 use crate::watcher::{self, VaultWatcher};
 
@@ -75,5 +76,38 @@ impl Server {
     }
 }
 
+/// Tools that cut their own output (they tell the client where to continue).
+/// Error messages are always cut.
+const SELF_LIMITED: [&str; 1] = ["read_note"];
+
 #[tool_handler(router = self.tool_router)]
-impl ServerHandler for Server {}
+impl ServerHandler for Server {
+    /// The one place where the size limit applies: every tool output, errors
+    /// included, is cut here.
+    async fn call_tool(
+        &self,
+        request: rmcp::model::CallToolRequestParams,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<rmcp::model::CallToolResponse, rmcp::ErrorData> {
+        let self_limited = SELF_LIMITED.contains(&request.name.as_ref());
+        let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
+        let limit = self.config.max_response_bytes;
+        let mut response = self.tool_router.call(tcc).await.map_err(|mut e| {
+            e.message = truncate_with_notice(&e.message, limit).into();
+            e
+        })?;
+        if let rmcp::model::CallToolResponse::Complete(result) = &mut response
+            && !(self_limited && result.is_error != Some(true))
+        {
+            for block in &mut result.content {
+                if let Some(text) = block.as_text() {
+                    let cut = truncate_with_notice(&text.text, limit);
+                    if cut.len() != text.text.len() {
+                        *block = rmcp::model::ContentBlock::text(cut);
+                    }
+                }
+            }
+        }
+        Ok(response)
+    }
+}

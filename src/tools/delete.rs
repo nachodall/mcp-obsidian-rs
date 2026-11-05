@@ -25,17 +25,18 @@ fn unique_trash_name(name: &str, n: u32) -> String {
 }
 
 pub fn delete_note(server: &Server, args: DeleteNoteArgs) -> Result<String, ToolError> {
-    let source = server.vault.resolve_file(&args.path)?;
-    let is_note = source
-        .extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("md"));
-    if !is_note {
-        return Err(format!("only notes can be deleted: {}", args.path).into());
-    }
+    let source = server.vault.resolve_note(&args.path)?;
     let name = source.file_name().ok_or("invalid path")?.to_string_lossy().to_string();
     let trash = server.vault.root().join(".trash");
-    std::fs::create_dir_all(&trash).map_err(ToolError::io("delete"))?;
+    // A symlinked `.trash` must resolve inside the vault; check before creating anything.
+    if trash.symlink_metadata().is_ok() {
+        let inside = trash.canonicalize().is_ok_and(|c| c.starts_with(server.vault.root()));
+        if !inside {
+            return Err(".trash must be inside the vault".into());
+        }
+    } else {
+        std::fs::create_dir_all(&trash).map_err(ToolError::io("delete"))?;
+    }
     let mut n = 0u32;
     loop {
         let dest = trash.join(unique_trash_name(&name, n));

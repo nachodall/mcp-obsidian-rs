@@ -4,7 +4,6 @@ use serde::Deserialize;
 
 use crate::frontmatter::{self, all_tags, frontmatter_tags, inline_tags, normalize_tag, tag_matches};
 use crate::fs_write::write_atomic;
-use crate::output::truncate_with_notice;
 use crate::error::ToolError;
 use crate::server::Server;
 
@@ -34,7 +33,7 @@ pub struct SearchByTagArgs {
 
 impl Server {
     fn read_note_text(&self, path: &str) -> Result<(std::path::PathBuf, String), ToolError> {
-        let target = self.vault.resolve_file(path)?;
+        let target = self.vault.resolve_note(path)?;
         let text = std::fs::read_to_string(&target).map_err(ToolError::io("read"))?;
         Ok((target, text))
     }
@@ -85,8 +84,7 @@ impl Server {
             }
         }
         paths.sort();
-        let out = if paths.is_empty() { "No results.".to_string() } else { paths.join("\n") };
-        Ok(truncate_with_notice(&out, self.config.max_response_bytes))
+        Ok(if paths.is_empty() { "No results.".to_string() } else { paths.join("\n") })
     }
 }
 

@@ -3,7 +3,6 @@ use rmcp::{tool, tool_router};
 use serde::Deserialize;
 
 use crate::error::ToolError;
-use crate::output::truncate_with_notice;
 use crate::server::Server;
 use crate::vault::Vault;
 
@@ -36,8 +35,6 @@ impl Server {
     /// Lists notes, folders and attachments in the vault, or in one folder.
     #[tool(name = "list_notes")]
     async fn list_notes_tool(&self, args: Parameters<ListNotesArgs>) -> Result<String, String> {
-        list_notes(&self.vault, args.0)
-            .map(|text| truncate_with_notice(&text, self.config.max_response_bytes))
-            .map_err(String::from)
+        list_notes(&self.vault, args.0).map_err(String::from)
     }
 }

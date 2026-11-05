@@ -47,15 +47,17 @@ fn validate(server: &Server, args: &MoveFolderArgs) -> Result<Checked, ToolError
 }
 
 /// Every file under the folder with its new path. Computed before anything moves.
-fn plan(server: &Server, checked: &Checked) -> (Vec<(String, String)>, Vec<Rewrite>) {
+fn plan(server: &Server, checked: &Checked) -> (Vec<(String, String)>, Vec<Rewrite>, usize) {
     let before = server.vault.files(true);
+    let visible = server.vault.files(false);
     let prefix = format!("{}/", checked.from);
     let moves: Vec<(String, String)> = before
         .iter()
         .filter_map(|f| f.strip_prefix(&prefix).map(|rest| (f.clone(), format!("{}/{rest}", checked.to))))
         .collect();
     let rewrites = plan_rewrites(&server.vault, &before, &moves);
-    (moves, rewrites)
+    let shown = visible.iter().filter(|f| f.starts_with(&prefix)).count();
+    (moves, rewrites, shown)
 }
 
 fn execute(
@@ -63,6 +65,7 @@ fn execute(
     checked: Checked,
     moves: Vec<(String, String)>,
     rewrites: Vec<Rewrite>,
+    shown: usize,
 ) -> Result<String, ToolError> {
     let Checked { from, to, src, dst } = checked;
     // One directory rename; the destination was checked not to exist.
@@ -75,13 +78,13 @@ fn execute(
         server.after_write(new);
     }
     let summary = apply_rewrites(server, rewrites)?;
-    Ok(format!("moved {from} -> {to}\n{} file(s) moved\n{}", moves.len(), summary.render()))
+    Ok(format!("moved {from} -> {to}\n{} file(s) moved\n{}", shown, summary.render()))
 }
 
 pub fn move_folder(server: &Server, args: MoveFolderArgs) -> Result<String, ToolError> {
     let checked = validate(server, &args)?;
-    let (moves, rewrites) = plan(server, &checked);
-    execute(server, checked, moves, rewrites)
+    let (moves, rewrites, shown) = plan(server, &checked);
+    execute(server, checked, moves, rewrites, shown)
 }
 
 #[tool_router(router = move_folder_router, vis = "pub(crate)")]

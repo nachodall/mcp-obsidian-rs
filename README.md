@@ -151,8 +151,18 @@ Rules:
 - Unknown keys are errors.
 - An invalid file stops the server. The error says what is wrong. Fix the file
   and start again.
-- `.obsidian/` and `.trash/` are always hidden. You do not need to list them.
+- `.obsidian/`, `.trash/` and `.mcp-obsidian.toml` itself are always hidden.
+  You do not need to list them. No tool can read, move or edit the config file.
+- Folder names in `excluded_folders` ignore case, a leading `./` and slashes at
+  the ends. `"Private"`, `"private/"` and `"./private"` all hide `private/`.
+- An empty, absolute or `..` entry stops the server.
+- `create_note`, `edit_note`, `add_tag`, `remove_tag`, `get_tags` and
+  `delete_note` work on `.md` notes only. `move_note` can still move
+  attachments.
 - `delete_note` moves the note to `.trash/`. You can restore it from there.
+  If `.trash` is a link that leaves the vault, `delete_note` fails.
+- Every tool response, errors included, is cut at `max_response_bytes`.
+- Edits keep the file permissions.
 
 ## Privacy
 

@@ -4,7 +4,6 @@ use serde::Deserialize;
 
 use crate::error::ToolError;
 use crate::links::{parse_links, resolve_target};
-use crate::output::truncate_with_notice;
 use crate::server::Server;
 use crate::vault::Vault;
 
@@ -34,8 +33,7 @@ pub fn backlinks(vault: &Vault, rel: &str) -> Vec<String> {
 fn get_backlinks(server: &Server, path: &str) -> Result<String, ToolError> {
     let abs = server.vault.resolve_file(path)?;
     let rel = server.vault.rel_of(&abs).ok_or("invalid path")?;
-    let text = backlinks(&server.vault, &rel).join("\n");
-    Ok(truncate_with_notice(&text, server.config.max_response_bytes))
+    Ok(backlinks(&server.vault, &rel).join("\n"))
 }
 
 #[tool_router(router = backlinks_router, vis = "pub(crate)")]
