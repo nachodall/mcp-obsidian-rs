@@ -58,11 +58,12 @@ impl Server {
         let router = Self::list_router()
             + Self::read_router()
             + Self::search_router()
-            + Self::backlinks_router();
+            + Self::backlinks_router()
+            + Self::tags_router();
         if options.read_only {
             router
         } else {
-            router + Self::write_router()
+            router + Self::write_router() + Self::tags_write_router()
         }
     }
 

@@ -34,8 +34,7 @@ pub struct SearchIndex {
     writer: Mutex<IndexWriter>,
     path: Field,
     body: Field,
-    /// Filled by ticket 05 (note tags); empty for now.
-    #[allow(dead_code)]
+    /// Frontmatter and inline tags of each note.
     tags: Field,
 }
 
@@ -128,6 +127,9 @@ impl SearchIndex {
         let mut doc = TantivyDocument::default();
         doc.add_text(self.path, rel);
         doc.add_text(self.body, text);
+        for tag in crate::frontmatter::all_tags(text) {
+            doc.add_text(self.tags, tag);
+        }
         doc
     }
 
