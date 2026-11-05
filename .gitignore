@@ -1,0 +1,4 @@
+/target
+
+# Local-only design docs (specs, decisions, tickets)
+/docs/specs/
