@@ -4,7 +4,7 @@
 
 use crate::error::ToolError;
 use crate::fs_write::write_atomic;
-use crate::links::{parse_links, resolve_target};
+use crate::links::{FileIndex, parse_links};
 use crate::server::Server;
 use crate::vault::Vault;
 
@@ -25,10 +25,11 @@ pub fn plan_rewrites(vault: &Vault, before: &[String], moves: &[(String, String)
         .iter()
         .map(|f| moves.iter().find(|(o, _)| o == f).map_or_else(|| f.clone(), |(_, n)| n.clone()))
         .collect();
+    let (index_before, index_after) = (FileIndex::new(before), FileIndex::new(&after));
     let mut rewrites = Vec::new();
     for (file, final_rel) in before.iter().zip(after.iter()).filter(|(f, _)| f.ends_with(".md")) {
         let Ok(text) = std::fs::read_to_string(vault.root().join(file)) else { continue };
-        if let Some((new, links)) = relink_text_many(&text, before, &after, moves) {
+        if let Some((new, links)) = relink_with(&text, &index_before, &index_after, moves) {
             rewrites.push(Rewrite { rel: final_rel.clone(), text: new, links });
         }
     }
@@ -65,30 +66,39 @@ impl RewriteSummary {
 pub fn apply_rewrites(server: &Server, rewrites: Vec<Rewrite>) -> Result<RewriteSummary, ToolError> {
     let vault = &server.vault;
     let mut summary = RewriteSummary::default();
+    let mut indexed = Vec::new();
+    let mut failure = None;
     for Rewrite { rel, text, links } in rewrites {
-        write_atomic(&vault.root().join(&rel), text.as_bytes()).map_err(ToolError::io("write"))?;
+        if let Err(e) = write_atomic(&vault.root().join(&rel), text.as_bytes()) {
+            failure = Some(ToolError::io("write")(e));
+            break;
+        }
         summary.links += links;
         if vault.is_hidden(std::path::Path::new(&rel)) {
             summary.excluded += 1;
         } else {
-            server.after_write(&rel);
+            indexed.push(rel.clone());
             summary.visible.push(rel);
         }
     }
-    Ok(summary)
+    server.after_write_many(&indexed);
+    match failure {
+        Some(e) => Err(e),
+        None => Ok(summary),
+    }
 }
 
 /// Target text for a link that now has to point at `to`. `files_after` is the
 /// file list after the move. Keeps the user's style: a bare name stays bare
 /// while it is still unique, a path stays a path.
-fn new_target(old: &str, to: &str, files_after: &[String]) -> String {
+fn new_target(old: &str, to: &str, after: &FileIndex) -> String {
     let strip_md = !old.trim().ends_with(".md") && to.ends_with(".md");
     let shorten = |s: &str| if strip_md { s.strip_suffix(".md").unwrap_or(s).to_string() } else { s.to_string() };
     let leading = if old.starts_with('/') { "/" } else { "" };
     let full = format!("{leading}{}", shorten(to));
     if !old.contains('/') {
         let name = shorten(to.rsplit('/').next().unwrap_or(to));
-        if resolve_target(&name, files_after).as_deref() == Some(to) {
+        if after.resolve(&name).as_deref() == Some(to) {
             return name;
         }
     }
@@ -105,11 +115,21 @@ pub fn relink_text_many(
     files_after: &[String],
     moves: &[(String, String)],
 ) -> Option<(String, usize)> {
+    relink_with(text, &FileIndex::new(files_before), &FileIndex::new(files_after), moves)
+}
+
+/// Same as `relink_text_many` with the name indexes already built.
+fn relink_with(
+    text: &str,
+    before: &FileIndex,
+    after: &FileIndex,
+    moves: &[(String, String)],
+) -> Option<(String, usize)> {
     let mut edits: Vec<(std::ops::Range<usize>, String)> = Vec::new();
     for link in parse_links(text) {
-        let Some(resolved) = resolve_target(&link.target, files_before) else { continue };
+        let Some(resolved) = before.resolve(&link.target) else { continue };
         let Some((_, to)) = moves.iter().find(|(f, _)| *f == resolved) else { continue };
-        let new = new_target(&link.target, to, files_after);
+        let new = new_target(&link.target, to, after);
         if new != link.target {
             edits.push((link.target_range.clone(), new));
         }

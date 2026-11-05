@@ -5,7 +5,7 @@ use serde::Deserialize;
 use crate::frontmatter::{self, all_tags, frontmatter_tags, inline_tags, normalize_tag, tag_matches};
 use crate::fs_write::write_atomic;
 use crate::error::ToolError;
-use crate::server::Server;
+use crate::server::{Server, blocking};
 
 /// Arguments of the `get_tags` tool.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -97,18 +97,21 @@ impl Server {
     /// Lists the tags of a note: frontmatter tags and inline `#tags`.
     #[tool(name = "get_tags")]
     async fn get_tags_tool(&self, args: Parameters<GetTagsArgs>) -> Result<String, String> {
-        let (_, text) = self.read_note_text(&args.0.path).map_err(String::from)?;
-        Ok(format!(
-            "Frontmatter tags: {}\nInline tags: {}",
-            join(&frontmatter_tags(&text)),
-            join(&inline_tags(&text))
-        ))
+        blocking(self, move |s| {
+            let (_, text) = s.read_note_text(&args.0.path)?;
+            Ok(format!(
+                "Frontmatter tags: {}\nInline tags: {}",
+                join(&frontmatter_tags(&text)),
+                join(&inline_tags(&text))
+            ))
+        })
+        .await
     }
 
     /// Finds notes that have a tag, in the frontmatter or inline.
     #[tool(name = "search_by_tag")]
     async fn search_by_tag_tool(&self, args: Parameters<SearchByTagArgs>) -> Result<String, String> {
-        self.search_by_tag(&args.0.tag).map_err(String::from)
+        blocking(self, move |s| s.search_by_tag(&args.0.tag)).await
     }
 }
 
@@ -118,12 +121,12 @@ impl Server {
     /// missing. Every other field and the body stay as they are.
     #[tool(name = "add_tag")]
     async fn add_tag_tool(&self, args: Parameters<TagArgs>) -> Result<String, String> {
-        self.change_tag(args.0, true).map_err(String::from)
+        blocking(self, move |s| s.change_tag(args.0, true)).await
     }
 
     /// Removes a tag from the frontmatter `tags` list. Inline `#tags` stay.
     #[tool(name = "remove_tag")]
     async fn remove_tag_tool(&self, args: Parameters<TagArgs>) -> Result<String, String> {
-        self.change_tag(args.0, false).map_err(String::from)
+        blocking(self, move |s| s.change_tag(args.0, false)).await
     }
 }

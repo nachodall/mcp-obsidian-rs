@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 use crate::fs_write::{create_atomic, write_atomic};
 use crate::error::ToolError;
-use crate::server::Server;
+use crate::server::{Server, blocking};
 
 /// Arguments of the `create_note` tool.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -39,6 +39,15 @@ impl Server {
     pub(crate) fn after_write(&self, rel_path: &str) {
         if let Err(e) = self.index.upsert(rel_path) {
             eprintln!("index update failed for {rel_path}: {e}");
+        }
+    }
+}
+
+impl Server {
+    /// Batch version of `after_write`: one index commit for all paths.
+    pub(crate) fn after_write_many(&self, rel_paths: &[String]) {
+        if let Err(e) = self.index.update_many(rel_paths) {
+            eprintln!("index update failed for {} notes: {e}", rel_paths.len());
         }
     }
 }
@@ -95,13 +104,13 @@ impl Server {
     /// Creates a new note. Fails when the path already exists.
     #[tool(name = "create_note")]
     async fn create_note_tool(&self, args: Parameters<CreateNoteArgs>) -> Result<String, String> {
-        create_note(self, args.0).map_err(String::from)
+        blocking(self, move |s| create_note(s, args.0)).await
     }
 
     /// Edits an existing note: exact replace (must match once), append, or
     /// full overwrite (only with `overwrite: true`).
     #[tool(name = "edit_note")]
     async fn edit_note_tool(&self, args: Parameters<EditNoteArgs>) -> Result<String, String> {
-        edit_note(self, args.0).map_err(String::from)
+        blocking(self, move |s| edit_note(s, args.0)).await
     }
 }

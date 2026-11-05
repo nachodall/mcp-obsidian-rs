@@ -5,7 +5,7 @@ use serde::Deserialize;
 use crate::error::ToolError;
 use crate::fs_write::move_no_replace;
 use crate::relink::{Rewrite, apply_rewrites, plan_rewrites};
-use crate::server::Server;
+use crate::server::{Server, blocking};
 use crate::vault::VaultError;
 
 /// Arguments of the `move_note` tool.
@@ -61,8 +61,7 @@ fn execute(
             ToolError::io("move")(e)
         }
     })?;
-    server.after_write(&from);
-    server.after_write(&to);
+    server.after_write_many(&[from.clone(), to.clone()]);
     let summary = apply_rewrites(server, rewrites)?;
     Ok(format!("moved {from} -> {to}\n{}", summary.render()))
 }
@@ -79,6 +78,6 @@ impl Server {
     /// keeping aliases, headings and embeds. Fails when the target exists.
     #[tool(name = "move_note")]
     async fn move_note_tool(&self, args: Parameters<MoveNoteArgs>) -> Result<String, String> {
-        move_note(self, args.0).map_err(String::from)
+        blocking(self, move |s| move_note(s, args.0)).await
     }
 }

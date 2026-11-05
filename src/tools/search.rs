@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 use crate::error::ToolError;
 use crate::index::Hit;
-use crate::server::Server;
+use crate::server::{Server, blocking};
 
 /// Most matching lines shown per note.
 const MAX_LINES_PER_NOTE: usize = 5;
@@ -62,6 +62,6 @@ impl Server {
     /// Full-text search: ranked notes with path and matching lines only.
     #[tool(name = "search_notes")]
     async fn search_notes_tool(&self, args: Parameters<SearchNotesArgs>) -> Result<String, String> {
-        self.search_notes(args.0).map_err(String::from)
+        blocking(self, move |s| s.search_notes(args.0)).await
     }
 }

@@ -3,7 +3,7 @@ use rmcp::{tool, tool_router};
 use serde::Deserialize;
 
 use crate::error::ToolError;
-use crate::server::Server;
+use crate::server::{Server, blocking};
 use crate::vault::{Vault, VaultError};
 
 /// Arguments of the `read_note` tool.
@@ -75,6 +75,6 @@ impl Server {
     /// Reads a note, whole or by line range.
     #[tool(name = "read_note")]
     async fn read_note_tool(&self, args: Parameters<ReadNoteArgs>) -> Result<String, String> {
-        read_note(&self.vault, args.0, self.config.max_response_bytes).map_err(String::from)
+        blocking(self, move |s| read_note(&s.vault, args.0, s.config.max_response_bytes)).await
     }
 }

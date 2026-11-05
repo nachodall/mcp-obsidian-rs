@@ -1,5 +1,6 @@
 //! Wikilink and embed parser and resolver.
 
+use std::collections::HashMap;
 use std::ops::Range;
 
 /// One `[[...]]` or `![[...]]` occurrence in a note.
@@ -138,29 +139,61 @@ fn build_link(text: &str, open: usize, inner_start: usize, inner_end: usize, emb
     })
 }
 
-/// Resolves a link target like Obsidian. `files` are vault-relative paths with `/`
-/// separators. Exact path wins (`.md` optional), then the shortest path whose
-/// trailing segments match the target. Matching ignores case.
+/// Name index over a file list, built once so that each link resolves with
+/// hash lookups instead of a scan of every file.
+#[derive(Debug, Default)]
+pub struct FileIndex<'a> {
+    files: &'a [String],
+    /// Whole lowercase path -> file positions.
+    exact: HashMap<String, Vec<usize>>,
+    /// Every lowercase suffix that follows a `/` -> file positions.
+    suffix: HashMap<String, Vec<usize>>,
+}
+
+impl<'a> FileIndex<'a> {
+    pub fn new(files: &'a [String]) -> Self {
+        let mut exact: HashMap<String, Vec<usize>> = HashMap::new();
+        let mut suffix: HashMap<String, Vec<usize>> = HashMap::new();
+        for (i, f) in files.iter().enumerate() {
+            let lower = f.to_lowercase();
+            for (pos, _) in lower.match_indices('/') {
+                suffix.entry(lower[pos + 1..].to_string()).or_default().push(i);
+            }
+            exact.entry(lower).or_default().push(i);
+        }
+        FileIndex { files, exact, suffix }
+    }
+
+    fn candidates<'s>(
+        &'s self,
+        map: &'s HashMap<String, Vec<usize>>,
+        keys: &'s [String; 2],
+    ) -> impl Iterator<Item = &'s String> {
+        keys.iter().filter_map(|k| map.get(k)).flatten().map(|&i| &self.files[i])
+    }
+
+    /// Resolves a link target like Obsidian. Exact path wins (`.md` optional),
+    /// then the shortest path whose trailing segments match the target (ties:
+    /// alphabetical). Matching ignores case.
+    pub fn resolve(&self, target: &str) -> Option<String> {
+        let t = target.trim().trim_start_matches('/').to_lowercase();
+        if t.is_empty() {
+            return None;
+        }
+        let keys = [t.clone(), format!("{t}.md")];
+        if let Some(f) = self.candidates(&self.exact, &keys).min() {
+            return Some(f.clone());
+        }
+        self.candidates(&self.suffix, &keys)
+            .min_by(|a, b| a.matches('/').count().cmp(&b.matches('/').count()).then_with(|| a.cmp(b)))
+            .cloned()
+    }
+}
+
+/// One-shot resolve against a plain list. Build a `FileIndex` when resolving
+/// many targets.
 pub fn resolve_target(target: &str, files: &[String]) -> Option<String> {
-    let t = target.trim().trim_start_matches('/').to_lowercase();
-    if t.is_empty() {
-        return None;
-    }
-    let with_md = format!("{t}.md");
-    let exact = |f: &&String| {
-        let l = f.to_lowercase();
-        l == t || l == with_md
-    };
-    if let Some(f) = files.iter().filter(exact).min() {
-        return Some(f.clone());
-    }
-    let suffix = |f: &&String| {
-        let l = f.to_lowercase();
-        [&t, &with_md].iter().any(|s| l.ends_with(&format!("/{s}")))
-    };
-    files.iter().filter(suffix).min_by(|a, b| {
-        a.matches('/').count().cmp(&b.matches('/').count()).then_with(|| a.cmp(b))
-    }).cloned()
+    FileIndex::new(files).resolve(target)
 }
 
 #[cfg(test)]

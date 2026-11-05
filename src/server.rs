@@ -76,6 +76,19 @@ impl Server {
     }
 }
 
+/// Runs the synchronous body of a tool off the async runtime. A panic in the
+/// body comes back as a tool error instead of hanging the client.
+pub(crate) async fn blocking<T: Send + 'static>(
+    server: &Server,
+    f: impl FnOnce(&Server) -> Result<T, crate::error::ToolError> + Send + 'static,
+) -> Result<T, String> {
+    let server = server.clone();
+    match tokio::task::spawn_blocking(move || f(&server)).await {
+        Ok(result) => result.map_err(String::from),
+        Err(e) => Err(format!("internal error: tool task failed: {e}")),
+    }
+}
+
 /// Tools that cut their own output (they tell the client where to continue).
 /// Error messages are always cut.
 const SELF_LIMITED: [&str; 1] = ["read_note"];

@@ -3,7 +3,7 @@ use rmcp::{tool, tool_router};
 use serde::Deserialize;
 
 use crate::error::ToolError;
-use crate::server::Server;
+use crate::server::{Server, blocking};
 use crate::vault::Vault;
 
 /// Arguments of the `list_notes` tool.
@@ -35,6 +35,6 @@ impl Server {
     /// Lists notes, folders and attachments in the vault, or in one folder.
     #[tool(name = "list_notes")]
     async fn list_notes_tool(&self, args: Parameters<ListNotesArgs>) -> Result<String, String> {
-        list_notes(&self.vault, args.0).map_err(String::from)
+        blocking(self, move |s| list_notes(&s.vault, args.0)).await
     }
 }

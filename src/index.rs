@@ -162,6 +162,31 @@ impl SearchIndex {
         Ok(())
     }
 
+    /// Re-indexes many notes with ONE commit and reload. Same rules as `upsert`.
+    pub fn update_many(&self, paths: &[String]) -> anyhow::Result<()> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let mut writer = self.writer()?;
+        for path in paths {
+            let rel = normalize(path);
+            let text = self
+                .vault
+                .resolve(&rel)
+                .ok()
+                .filter(|p| p.is_file() && rel.ends_with(".md"))
+                .and_then(|p| std::fs::read_to_string(p).ok());
+            writer.delete_term(Term::from_field_text(self.path, &rel));
+            if let Some(text) = text {
+                writer.add_document(self.document(&rel, &text))?;
+            }
+        }
+        writer.commit()?;
+        drop(writer);
+        self.reader.reload()?;
+        Ok(())
+    }
+
     /// Removes one vault-relative note from the index.
     pub fn remove(&self, path: &str) -> anyhow::Result<()> {
         let rel = normalize(path);

@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 use crate::error::ToolError;
 use crate::fs_write::move_no_replace;
-use crate::server::Server;
+use crate::server::{Server, blocking};
 
 /// Arguments of the `delete_note` tool.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -56,6 +56,6 @@ impl Server {
     /// Moves a note to the vault's `.trash/`. Nothing is removed from disk.
     #[tool(name = "delete_note")]
     async fn delete_note_tool(&self, args: Parameters<DeleteNoteArgs>) -> Result<String, String> {
-        delete_note(self, args.0).map_err(String::from)
+        blocking(self, move |s| delete_note(s, args.0)).await
     }
 }

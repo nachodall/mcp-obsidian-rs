@@ -6,7 +6,7 @@ use serde::Deserialize;
 
 use crate::error::ToolError;
 use crate::relink::{Rewrite, apply_rewrites, plan_rewrites};
-use crate::server::Server;
+use crate::server::{Server, blocking};
 use crate::vault::VaultError;
 
 /// Arguments of the `move_folder` tool.
@@ -73,10 +73,8 @@ fn execute(
         std::fs::create_dir_all(parent).map_err(ToolError::io("move"))?;
     }
     std::fs::rename(&src, &dst).map_err(ToolError::io("move"))?;
-    for (old, new) in &moves {
-        server.after_write(old);
-        server.after_write(new);
-    }
+    let touched: Vec<String> = moves.iter().flat_map(|(old, new)| [old.clone(), new.clone()]).collect();
+    server.after_write_many(&touched);
     let summary = apply_rewrites(server, rewrites)?;
     Ok(format!("moved {from} -> {to}\n{} file(s) moved\n{}", shown, summary.render()))
 }
@@ -93,6 +91,6 @@ impl Server {
     /// link and embed to them. Fails when the target exists.
     #[tool(name = "move_folder")]
     async fn move_folder_tool(&self, args: Parameters<MoveFolderArgs>) -> Result<String, String> {
-        move_folder(self, args.0).map_err(String::from)
+        blocking(self, move |s| move_folder(s, args.0)).await
     }
 }
