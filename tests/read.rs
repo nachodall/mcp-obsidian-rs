@@ -34,7 +34,11 @@ async fn h6_excluded_note_same_error_as_missing() {
     let excluded = c.err("read_note", json!({"path": "secret/hidden-note.md"})).await;
     let missing = c.err("read_note", json!({"path": "nothing/there.md"})).await;
     assert!(excluded.contains("not found"), "{excluded}");
-    assert!(!excluded.contains("hidden-note"), "{excluded}");
+    assert_eq!(
+        excluded.replace("secret/hidden-note.md", "<PATH>"),
+        missing.replace("nothing/there.md", "<PATH>"),
+        "excluded and missing notes must give the same error"
+    );
     assert!(missing.contains("not found"), "{missing}");
 }
 
