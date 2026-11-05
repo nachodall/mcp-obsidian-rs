@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.104"
+notify = "8.2.1"
 rmcp = { version = "3.9.0", features = ["server", "client", "macros", "transport-io"] }
 schemars = "1.2.3"
 serde = { version = "1.0.229", features = ["derive"] }
