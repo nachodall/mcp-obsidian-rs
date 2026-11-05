@@ -56,6 +56,50 @@ impl Vault {
         Ok(canonical)
     }
 
+    /// Resolves a vault-relative path that may not exist yet (write target).
+    /// Same rules as `resolve`: no `..`, no absolute paths, nothing hidden or
+    /// excluded, no symlink leaving the vault. The deepest existing ancestor is
+    /// canonicalized; the missing tail is appended as is.
+    pub fn resolve_for_write(&self, relative: &str) -> Result<PathBuf, VaultError> {
+        let mut clean = PathBuf::new();
+        for component in Path::new(relative).components() {
+            match component {
+                Component::Normal(part) => clean.push(part),
+                Component::CurDir => {}
+                _ => return Err(VaultError::InvalidPath(relative.to_string())),
+            }
+        }
+        let not_found = || VaultError::NotFound(relative.to_string());
+        if clean.as_os_str().is_empty() || self.is_hidden(&clean) {
+            return Err(not_found());
+        }
+        let mut existing = self.root.join(&clean);
+        let mut tail = PathBuf::new();
+        let canonical = loop {
+            // A dangling symlink exists but cannot be canonicalized: refuse it.
+            if let Ok(canonical) = existing.canonicalize() {
+                break canonical;
+            }
+            if existing.symlink_metadata().is_ok() {
+                return Err(not_found());
+            }
+            let name = existing.file_name().ok_or_else(not_found)?.to_owned();
+            let mut next = PathBuf::from(name);
+            if !tail.as_os_str().is_empty() {
+                next.push(&tail);
+            }
+            tail = next;
+            if !existing.pop() {
+                return Err(not_found());
+            }
+        };
+        let inside = canonical.strip_prefix(&self.root).map_err(|_| not_found())?;
+        if self.is_hidden(&inside.join(&tail)) {
+            return Err(not_found());
+        }
+        Ok(canonical.join(tail))
+    }
+
     /// True when a vault-relative path is excluded or hidden (`.obsidian/`, `.trash/`).
     pub fn is_hidden(&self, relative: &Path) -> bool {
         let first = relative.components().next();
