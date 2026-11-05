@@ -2,6 +2,7 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
 use serde::Deserialize;
 
+use crate::error::ToolError;
 use crate::index::Hit;
 use crate::output::truncate_with_notice;
 use crate::server::Server;
@@ -38,21 +39,14 @@ fn format_hits(hits: &[Hit]) -> String {
     out
 }
 
-#[tool_router(router = search_router, vis = "pub(crate)")]
 impl Server {
-    /// Full-text search: ranked notes with path and matching lines only.
-    #[tool(name = "search_notes")]
-    async fn search_notes_tool(&self, args: Parameters<SearchNotesArgs>) -> Result<String, String> {
-        let args = args.0;
+    fn search_notes(&self, args: SearchNotesArgs) -> Result<String, ToolError> {
         // The scope goes through the resolver: hidden and missing look the same.
         let folder = match args.folder.as_deref() {
             Some(f) => {
-                let dir = self.vault.resolve(f).map_err(|e| e.to_string())?;
-                if !dir.is_dir() {
-                    return Err(format!("invalid path: {f} is not a folder"));
-                }
-                let rel = dir.strip_prefix(self.vault.root()).map_err(|e| e.to_string())?;
-                Some(rel.to_string_lossy().into_owned())
+                let dir = self.vault.resolve_dir(f)?;
+                let rel = self.vault.rel_of(&dir).ok_or("invalid path")?;
+                Some(rel)
             }
             None => None,
         };
@@ -61,5 +55,14 @@ impl Server {
             .search(&args.query, args.fuzzy.unwrap_or(false), folder.as_deref())
             .map_err(|e| format!("search failed: {e}"))?;
         Ok(truncate_with_notice(&format_hits(&hits), self.config.max_response_bytes))
+    }
+}
+
+#[tool_router(router = search_router, vis = "pub(crate)")]
+impl Server {
+    /// Full-text search: ranked notes with path and matching lines only.
+    #[tool(name = "search_notes")]
+    async fn search_notes_tool(&self, args: Parameters<SearchNotesArgs>) -> Result<String, String> {
+        self.search_notes(args.0).map_err(String::from)
     }
 }

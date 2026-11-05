@@ -1,46 +1,81 @@
-//! Link rewriting for moves and renames. Pure text functions plus a vault
-//! walk that, unlike `visible_files`, includes excluded folders.
+//! Link rewriting for moves and renames. Pure text functions plus the
+//! plan/apply steps shared by `move_note` and `move_folder`. The plan reads
+//! every note, excluded folders included (`Vault::files(true)`).
 
-use std::path::Path;
-
+use crate::error::ToolError;
+use crate::fs_write::write_atomic;
 use crate::links::{parse_links, resolve_target};
+use crate::server::Server;
 use crate::vault::Vault;
 
-/// Folders no tool may touch, not even to rewrite links.
-const ALWAYS_HIDDEN: [&str; 2] = [".obsidian", ".trash"];
-
-fn is_always_hidden(rel: &Path) -> bool {
-    rel.components().next().is_some_and(|c| ALWAYS_HIDDEN.iter().any(|h| c.as_os_str() == *h))
+/// New text of one note after a move.
+#[derive(Debug)]
+pub struct Rewrite {
+    /// Vault-relative path of the note in the layout after the move.
+    pub rel: String,
+    pub text: String,
+    /// Number of links changed.
+    pub links: usize,
 }
 
-/// Vault-relative paths (`/` separators) of every file, excluded folders
-/// included, `.obsidian/` and `.trash/` skipped. Symlinks leaving the vault
-/// are skipped. Sorted.
-pub fn all_files(vault: &Vault) -> Vec<String> {
-    let mut out = Vec::new();
-    walk(vault, vault.root(), &mut out);
-    out.sort();
-    out
-}
-
-fn walk(vault: &Vault, dir: &Path, out: &mut Vec<String>) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Ok(canonical) = path.canonicalize() else { continue };
-        let Ok(canonical_rel) = canonical.strip_prefix(vault.root()) else { continue };
-        let Ok(rel) = path.strip_prefix(vault.root()) else { continue };
-        if is_always_hidden(rel) || is_always_hidden(canonical_rel) {
-            continue;
-        }
-        if canonical.is_dir() {
-            if entry.file_type().is_ok_and(|t| !t.is_symlink()) {
-                walk(vault, &path, out);
-            }
-        } else {
-            out.push(rel.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/"));
+/// Plans the rewrites for `moves` (`(from, to)` pairs of vault-relative files)
+/// against `before`, the file list before the move. Nothing is written.
+pub fn plan_rewrites(vault: &Vault, before: &[String], moves: &[(String, String)]) -> Vec<Rewrite> {
+    let after: Vec<String> = before
+        .iter()
+        .map(|f| moves.iter().find(|(o, _)| o == f).map_or_else(|| f.clone(), |(_, n)| n.clone()))
+        .collect();
+    let mut rewrites = Vec::new();
+    for (file, final_rel) in before.iter().zip(after.iter()).filter(|(f, _)| f.ends_with(".md")) {
+        let Ok(text) = std::fs::read_to_string(vault.root().join(file)) else { continue };
+        if let Some((new, links)) = relink_text_many(&text, before, &after, moves) {
+            rewrites.push(Rewrite { rel: final_rel.clone(), text: new, links });
         }
     }
+    rewrites
+}
+
+/// What `apply_rewrites` did.
+#[derive(Debug, Default)]
+pub struct RewriteSummary {
+    pub links: usize,
+    /// Rewritten notes outside excluded folders.
+    pub visible: Vec<String>,
+    /// Number of rewritten notes inside excluded folders (paths are not shown).
+    pub excluded: usize,
+}
+
+impl RewriteSummary {
+    /// Report lines: link count, visible notes, excluded notes count.
+    pub fn render(&self) -> String {
+        let mut out = format!("updated {} link(s)", self.links);
+        if !self.visible.is_empty() {
+            out.push_str(&format!("\nnotes updated:\n{}", self.visible.join("\n")));
+        }
+        if self.excluded > 0 {
+            let s = if self.excluded == 1 { "" } else { "s" };
+            out.push_str(&format!("\n{} note{s} in excluded folders updated", self.excluded));
+        }
+        out
+    }
+}
+
+/// Writes the rewrites and keeps the index in sync. Notes in excluded folders
+/// are written but never indexed or listed.
+pub fn apply_rewrites(server: &Server, rewrites: Vec<Rewrite>) -> Result<RewriteSummary, ToolError> {
+    let vault = &server.vault;
+    let mut summary = RewriteSummary::default();
+    for Rewrite { rel, text, links } in rewrites {
+        write_atomic(&vault.root().join(&rel), text.as_bytes()).map_err(ToolError::io("write"))?;
+        summary.links += links;
+        if vault.is_hidden(std::path::Path::new(&rel)) {
+            summary.excluded += 1;
+        } else {
+            server.after_write(&rel);
+            summary.visible.push(rel);
+        }
+    }
+    Ok(summary)
 }
 
 /// Target text for a link that now has to point at `to`. `files_after` is the
@@ -60,21 +95,10 @@ fn new_target(old: &str, to: &str, files_after: &[String]) -> String {
     full
 }
 
-/// Rewrites the links in `text` that resolved to `from` (against
-/// `files_before`) so they point at `to` (resolved against `files_after`).
+/// Rewrites the links in `text` that resolved to a `from` of `moves` (against
+/// `files_before`) so they point at its `to` (resolved against `files_after`).
 /// Returns the new text and the number of links changed, or `None` when
 /// nothing changes. Links in code are ignored. Alias, fragment and `!` stay.
-pub fn relink_text(
-    text: &str,
-    files_before: &[String],
-    files_after: &[String],
-    from: &str,
-    to: &str,
-) -> Option<(String, usize)> {
-    relink_text_many(text, files_before, files_after, &[(from.to_string(), to.to_string())])
-}
-
-/// Like `relink_text`, for many `(from, to)` pairs at once (a folder move).
 pub fn relink_text_many(
     text: &str,
     files_before: &[String],

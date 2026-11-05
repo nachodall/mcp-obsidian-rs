@@ -41,6 +41,13 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     })
 }
 
+/// Moves a file without ever replacing: hard link to `dst` (fails with
+/// `AlreadyExists` when it exists, even under a race), then drops `src`.
+pub fn move_no_replace(src: &Path, dst: &Path) -> io::Result<()> {
+    std::fs::hard_link(src, dst)?;
+    std::fs::remove_file(src)
+}
+
 /// Like `write_atomic`, but fails with `AlreadyExists` when `path` exists
 /// (never replaces a file, even under a race). Creates missing parent folders.
 pub fn create_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
@@ -48,6 +55,8 @@ pub fn create_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     let tmp = write_temp(path, bytes)?;
+    // Not `move_no_replace`: the temp file must go even when the link fails,
+    // and a failed removal after a successful link is not an error here.
     // hard_link fails when the target exists, so it cannot overwrite.
     let linked = std::fs::hard_link(&tmp, path);
     let _ = std::fs::remove_file(&tmp);

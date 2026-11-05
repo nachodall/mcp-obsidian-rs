@@ -1,11 +1,11 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
 use serde::Deserialize;
 
-use crate::fs_write::write_atomic;
-use crate::relink::{all_files, relink_text_many};
+use crate::error::ToolError;
+use crate::relink::{Rewrite, apply_rewrites, plan_rewrites};
 use crate::server::Server;
 use crate::vault::VaultError;
 
@@ -18,80 +18,70 @@ pub struct MoveFolderArgs {
     pub to: String,
 }
 
-fn rel_string(root: &Path, abs: &Path) -> Result<String, String> {
-    let rel = abs.strip_prefix(root).map_err(|e| e.to_string())?;
-    Ok(rel.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/"))
+/// A checked move: both paths resolved, the target free.
+struct Checked {
+    /// Vault-relative source and target (`/` separators).
+    from: String,
+    to: String,
+    src: PathBuf,
+    dst: PathBuf,
 }
 
-pub fn move_folder(server: &Server, args: MoveFolderArgs) -> Result<String, String> {
+fn validate(server: &Server, args: &MoveFolderArgs) -> Result<Checked, ToolError> {
     let vault = &server.vault;
-    let src = vault.resolve(&args.from).map_err(|e| e.to_string())?;
-    let from = rel_string(vault.root(), &src)?;
+    let not_found = || VaultError::NotFound(args.from.clone());
+    let src = vault.resolve(&args.from)?;
+    let from = vault.rel_of(&src).ok_or_else(not_found)?;
     if from.is_empty() || !src.is_dir() {
-        return Err(VaultError::NotFound(args.from).to_string());
+        return Err(not_found().into());
     }
-    let dst_raw = vault.resolve_for_write(&args.to).map_err(|e| e.to_string())?;
-    let to = rel_string(vault.root(), &dst_raw)?;
-    // `resolve_for_write` may leave a trailing separator on an existing path.
-    let dst = vault.root().join(&to);
+    let dst = vault.resolve_for_write(&args.to)?;
+    let to = vault.rel_of(&dst).ok_or_else(|| VaultError::NotFound(args.to.clone()))?;
     if dst.symlink_metadata().is_ok() {
-        return Err(format!("already exists: {}", args.to));
+        return Err(ToolError::AlreadyExists(args.to.clone()));
     }
-    if to.starts_with(&format!("{from}/")) {
-        return Err(format!("cannot move a folder into itself: {}", args.from));
+    if Path::new(&to).starts_with(&from) {
+        return Err(format!("cannot move a folder into itself: {}", args.from).into());
     }
+    Ok(Checked { from, to, src, dst })
+}
 
-    // Links are computed before anything moves.
-    let prefix = format!("{from}/");
-    let before = all_files(vault);
+/// Every file under the folder with its new path. Computed before anything moves.
+fn plan(server: &Server, checked: &Checked) -> (Vec<(String, String)>, Vec<Rewrite>) {
+    let before = server.vault.files(true);
+    let prefix = format!("{}/", checked.from);
     let moves: Vec<(String, String)> = before
         .iter()
-        .filter_map(|f| f.strip_prefix(&prefix).map(|rest| (f.clone(), format!("{to}/{rest}"))))
+        .filter_map(|f| f.strip_prefix(&prefix).map(|rest| (f.clone(), format!("{}/{rest}", checked.to))))
         .collect();
-    let after: Vec<String> = before
-        .iter()
-        .map(|f| moves.iter().find(|(o, _)| o == f).map_or_else(|| f.clone(), |(_, n)| n.clone()))
-        .collect();
-    let mut rewrites: Vec<(String, String, usize)> = Vec::new(); // (rel in final layout, new text, links)
-    for (file, final_rel) in before.iter().zip(after.iter()).filter(|(f, _)| f.ends_with(".md")) {
-        let Ok(text) = std::fs::read_to_string(vault.root().join(file)) else { continue };
-        if let Some((new, n)) = relink_text_many(&text, &before, &after, &moves) {
-            rewrites.push((final_rel.clone(), new, n));
-        }
-    }
+    let rewrites = plan_rewrites(&server.vault, &before, &moves);
+    (moves, rewrites)
+}
 
+fn execute(
+    server: &Server,
+    checked: Checked,
+    moves: Vec<(String, String)>,
+    rewrites: Vec<Rewrite>,
+) -> Result<String, ToolError> {
+    let Checked { from, to, src, dst } = checked;
     // One directory rename; the destination was checked not to exist.
     if let Some(parent) = dst.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("move failed: {e}"))?;
+        std::fs::create_dir_all(parent).map_err(ToolError::io("move"))?;
     }
-    std::fs::rename(&src, &dst).map_err(|e| format!("move failed: {e}"))?;
+    std::fs::rename(&src, &dst).map_err(ToolError::io("move"))?;
     for (old, new) in &moves {
         server.after_write(old);
         server.after_write(new);
     }
+    let summary = apply_rewrites(server, rewrites)?;
+    Ok(format!("moved {from} -> {to}\n{} file(s) moved\n{}", moves.len(), summary.render()))
+}
 
-    let mut visible = Vec::new();
-    let mut excluded = 0usize;
-    let mut links = 0usize;
-    for (rel, new, n) in rewrites {
-        write_atomic(&vault.root().join(&rel), new.as_bytes()).map_err(|e| format!("write failed: {e}"))?;
-        links += n;
-        if vault.is_hidden(Path::new(&rel)) {
-            excluded += 1;
-        } else {
-            server.after_write(&rel);
-            visible.push(rel);
-        }
-    }
-    let mut out = format!("moved {from} -> {to}\n{} file(s) moved\nupdated {links} link(s)", moves.len());
-    if !visible.is_empty() {
-        out.push_str(&format!("\nnotes updated:\n{}", visible.join("\n")));
-    }
-    if excluded > 0 {
-        let s = if excluded == 1 { "" } else { "s" };
-        out.push_str(&format!("\n{excluded} note{s} in excluded folders updated"));
-    }
-    Ok(out)
+pub fn move_folder(server: &Server, args: MoveFolderArgs) -> Result<String, ToolError> {
+    let checked = validate(server, &args)?;
+    let (moves, rewrites) = plan(server, &checked);
+    execute(server, checked, moves, rewrites)
 }
 
 #[tool_router(router = move_folder_router, vis = "pub(crate)")]
@@ -100,6 +90,6 @@ impl Server {
     /// link and embed to them. Fails when the target exists.
     #[tool(name = "move_folder")]
     async fn move_folder_tool(&self, args: Parameters<MoveFolderArgs>) -> Result<String, String> {
-        move_folder(self, args.0)
+        move_folder(self, args.0).map_err(String::from)
     }
 }

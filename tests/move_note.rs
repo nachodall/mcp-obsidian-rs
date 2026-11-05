@@ -1,34 +1,10 @@
 mod common;
 
-use std::collections::BTreeSet;
-use std::fs;
-use std::path::Path;
 
+use common::fs::{files_with_content as files_under, read};
 use common::*;
 use mcp_obsidian::server::Options;
 use serde_json::json;
-
-fn files_under(root: &Path) -> BTreeSet<String> {
-    fn walk(dir: &Path, root: &Path, out: &mut BTreeSet<String>) {
-        for e in fs::read_dir(dir).unwrap().flatten() {
-            let p = e.path();
-            if e.file_type().unwrap().is_dir() {
-                walk(&p, root, out);
-            } else if e.file_type().unwrap().is_file() {
-                let rel = p.strip_prefix(root).unwrap().display().to_string();
-                let content = fs::read_to_string(&p).unwrap_or_default();
-                out.insert(format!("{rel}\n{content}"));
-            }
-        }
-    }
-    let mut out = BTreeSet::new();
-    walk(root, root, &mut out);
-    out
-}
-
-fn read(v: &TestVault, rel: &str) -> String {
-    fs::read_to_string(v.root.join(rel)).unwrap()
-}
 
 #[tokio::test]
 async fn h30_move_updates_every_link_form() {

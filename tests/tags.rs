@@ -2,13 +2,10 @@ mod common;
 
 use std::fs;
 
+use common::fs::{read};
 use common::*;
 use mcp_obsidian::server::Options;
 use serde_json::json;
-
-fn read(v: &TestVault, rel: &str) -> String {
-    fs::read_to_string(v.root.join(rel)).unwrap()
-}
 
 fn tag_vault() -> TestVault {
     let v = TestVault::standard();

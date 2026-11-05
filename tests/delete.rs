@@ -2,27 +2,11 @@ mod common;
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::Path;
 
+use common::fs::files_under;
 use common::*;
 use mcp_obsidian::server::Options;
 use serde_json::json;
-
-fn files_under(root: &Path) -> BTreeSet<String> {
-    fn walk(dir: &Path, root: &Path, out: &mut BTreeSet<String>) {
-        for e in fs::read_dir(dir).unwrap().flatten() {
-            let p = e.path();
-            if e.file_type().unwrap().is_dir() {
-                walk(&p, root, out);
-            } else {
-                out.insert(p.strip_prefix(root).unwrap().display().to_string());
-            }
-        }
-    }
-    let mut out = BTreeSet::new();
-    walk(root, root, &mut out);
-    out
-}
 
 #[tokio::test]
 async fn h35_delete_moves_note_to_trash_intact_and_hides_it() {

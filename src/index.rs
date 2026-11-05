@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::fmt;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use anyhow::{Context, anyhow};
 use tantivy::collector::TopDocs;
@@ -12,7 +12,7 @@ use tantivy::schema::{
 use tantivy::tokenizer::{AsciiFoldingFilter, LowerCaser, SimpleTokenizer, TextAnalyzer};
 use tantivy::{Index, IndexReader, IndexWriter, ReloadPolicy, TantivyDocument, Term};
 
-use crate::vault::Vault;
+use crate::vault::{Vault, join_rel};
 
 const TOKENIZER: &str = "fold";
 const WRITER_HEAP_BYTES: usize = 50_000_000;
@@ -110,12 +110,15 @@ impl SearchIndex {
             body,
             tags,
         };
-        let mut files = Vec::new();
-        this.walk(this.vault.root(), &mut files);
         {
-            let mut writer = this.writer.lock().map_err(|_| anyhow!("index lock poisoned"))?;
-            for (rel, text) in files {
-                writer.add_document(this.document(&rel, &text))?;
+            let mut writer = this.writer()?;
+            for entry in this.vault.walk(this.vault.root(), false) {
+                if entry.is_dir || entry.abs.extension().is_none_or(|e| e != "md") {
+                    continue;
+                }
+                if let Ok(text) = std::fs::read_to_string(&entry.abs) {
+                    writer.add_document(this.document(&entry.rel, &text))?;
+                }
             }
             writer.commit()?;
         }
@@ -133,28 +136,9 @@ impl SearchIndex {
         doc
     }
 
-    /// Collects `(relative path, text)` of every visible note under `dir`.
-    /// Does not follow symlinked folders and skips targets outside the vault or hidden.
-    fn walk(&self, dir: &Path, out: &mut Vec<(String, String)>) {
-        let Ok(entries) = std::fs::read_dir(dir) else { return };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let Ok(canonical) = path.canonicalize() else { continue };
-            let Ok(canonical_rel) = canonical.strip_prefix(self.vault.root()) else { continue };
-            let Ok(rel) = path.strip_prefix(self.vault.root()) else { continue };
-            if self.vault.is_hidden(rel) || self.vault.is_hidden(canonical_rel) {
-                continue;
-            }
-            if canonical.is_dir() {
-                if entry.file_type().is_ok_and(|t| !t.is_symlink()) {
-                    self.walk(&path, out);
-                }
-            } else if path.extension().is_some_and(|e| e == "md")
-                && let Ok(text) = std::fs::read_to_string(&canonical)
-            {
-                out.push((rel_string(rel), text));
-            }
-        }
+    /// Locks the single index writer.
+    fn writer(&self) -> anyhow::Result<MutexGuard<'_, IndexWriter>> {
+        self.writer.lock().map_err(|_| anyhow!("index lock poisoned"))
     }
 
     /// Re-indexes one vault-relative note (adds or replaces it). A note that is
@@ -167,7 +151,7 @@ impl SearchIndex {
             .ok()
             .filter(|p| p.is_file() && rel.ends_with(".md"))
             .and_then(|p| std::fs::read_to_string(p).ok());
-        let mut writer = self.writer.lock().map_err(|_| anyhow!("index lock poisoned"))?;
+        let mut writer = self.writer()?;
         writer.delete_term(Term::from_field_text(self.path, &rel));
         if let Some(text) = text {
             writer.add_document(self.document(&rel, &text))?;
@@ -181,7 +165,7 @@ impl SearchIndex {
     /// Removes one vault-relative note from the index.
     pub fn remove(&self, path: &str) -> anyhow::Result<()> {
         let rel = normalize(path);
-        let mut writer = self.writer.lock().map_err(|_| anyhow!("index lock poisoned"))?;
+        let mut writer = self.writer()?;
         writer.delete_term(Term::from_field_text(self.path, &rel));
         writer.commit()?;
         drop(writer);
@@ -228,15 +212,8 @@ impl SearchIndex {
     }
 }
 
-fn rel_string(rel: &Path) -> String {
-    rel.components()
-        .map(|c| c.as_os_str().to_string_lossy().into_owned())
-        .collect::<Vec<_>>()
-        .join("/")
-}
-
 fn normalize(path: &str) -> String {
-    rel_string(Path::new(path.trim_matches('/')))
+    join_rel(Path::new(path.trim_matches('/')))
         .split('/')
         .filter(|p| !p.is_empty() && *p != ".")
         .collect::<Vec<_>>()

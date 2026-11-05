@@ -12,7 +12,7 @@ use crate::watcher::{self, VaultWatcher};
 /// Options from the CLI.
 #[derive(Debug, Clone, Default)]
 pub struct Options {
-    /// `--read-only`: write tools are not registered (behavior in ticket 06).
+    /// `--read-only`: write tools are not registered.
     pub read_only: bool,
 }
 
@@ -23,7 +23,6 @@ pub struct Server {
     pub(crate) config: Config,
     /// In-memory search index, shared by every clone and by the write tools.
     pub(crate) index: Arc<SearchIndex>,
-    options: Options,
     /// Keeps the file watcher alive for the lifetime of the server.
     _watcher: Option<Arc<VaultWatcher>>,
     tool_router: ToolRouter<Server>,
@@ -48,7 +47,6 @@ impl Server {
             _watcher: watcher,
             config,
             tool_router: Self::tool_router(&options),
-            options,
         })
     }
 
@@ -74,10 +72,6 @@ impl Server {
 
     pub fn config(&self) -> &Config {
         &self.config
-    }
-
-    pub fn options(&self) -> &Options {
-        &self.options
     }
 }
 

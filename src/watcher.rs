@@ -3,7 +3,7 @@
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, RecvTimeoutError};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
@@ -16,7 +16,7 @@ const DEBOUNCE: Duration = Duration::from_millis(100);
 
 /// Handle of the running watcher. Dropping it stops the watcher thread.
 pub struct VaultWatcher {
-    _watcher: Mutex<RecommendedWatcher>,
+    _watcher: RecommendedWatcher,
 }
 
 impl std::fmt::Debug for VaultWatcher {
@@ -58,42 +58,29 @@ pub fn start(vault: Arc<Vault>, index: Arc<SearchIndex>) -> anyhow::Result<Vault
             }
         }
     });
-    Ok(VaultWatcher { _watcher: Mutex::new(watcher) })
+    Ok(VaultWatcher { _watcher: watcher })
 }
 
-fn rel_of(vault: &Vault, abs: &Path) -> Option<PathBuf> {
-    let rel = abs.strip_prefix(vault.root()).ok()?;
-    if rel.as_os_str().is_empty() || vault.is_hidden(rel) {
+/// Vault-relative path of a visible entry. `None` for the root and hidden paths.
+fn visible_rel(vault: &Vault, abs: &Path) -> Option<String> {
+    let rel = vault.rel_of(abs)?;
+    if rel.is_empty() || vault.is_hidden(Path::new(&rel)) {
         return None;
     }
-    Some(rel.to_path_buf())
-}
-
-fn rel_string(rel: &Path) -> String {
-    rel.components()
-        .map(|c| c.as_os_str().to_string_lossy().into_owned())
-        .collect::<Vec<_>>()
-        .join("/")
+    Some(rel)
 }
 
 /// Adds every note under `dir` (not following symlinks) to `out`.
 fn collect_notes(vault: &Vault, dir: &Path, out: &mut BTreeSet<String>) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Some(rel) = rel_of(vault, &path) else { continue };
-        let Ok(kind) = entry.file_type() else { continue };
-        if kind.is_dir() {
-            collect_notes(vault, &path, out);
-        } else if kind.is_file() && path.extension().is_some_and(|e| e == "md") {
-            out.insert(rel_string(&rel));
+    for entry in vault.walk(dir, false) {
+        if !entry.is_dir && !entry.is_symlink && entry.abs.extension().is_some_and(|e| e == "md") {
+            out.insert(entry.rel);
         }
     }
 }
 
 fn handle(vault: &Vault, index: &SearchIndex, known: &mut BTreeSet<String>, abs: &Path) {
-    let Some(rel) = rel_of(vault, abs) else { return };
-    let rel_s = rel_string(&rel);
+    let Some(rel_s) = visible_rel(vault, abs) else { return };
     let meta = std::fs::symlink_metadata(abs);
     let result = match meta {
         Err(_) => {

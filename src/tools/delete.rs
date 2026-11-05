@@ -2,8 +2,9 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
 use serde::Deserialize;
 
+use crate::error::ToolError;
+use crate::fs_write::move_no_replace;
 use crate::server::Server;
-use crate::vault::VaultError;
 
 /// Arguments of the `delete_note` tool.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -12,46 +13,41 @@ pub struct DeleteNoteArgs {
     pub path: String,
 }
 
-pub fn delete_note(server: &Server, args: DeleteNoteArgs) -> Result<String, String> {
-    let source = server.vault.resolve(&args.path).map_err(|e| e.to_string())?;
-    if !source.is_file() {
-        return Err(VaultError::NotFound(args.path).to_string());
+/// Candidate file name in `.trash/`: the name itself, then `stem 1.ext`, `stem 2.ext`, ...
+fn unique_trash_name(name: &str, n: u32) -> String {
+    if n == 0 {
+        return name.to_string();
     }
+    match name.rsplit_once('.') {
+        Some((stem, ext)) => format!("{stem} {n}.{ext}"),
+        None => format!("{name} {n}"),
+    }
+}
+
+pub fn delete_note(server: &Server, args: DeleteNoteArgs) -> Result<String, ToolError> {
+    let source = server.vault.resolve_file(&args.path)?;
     let is_note = source
         .extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| e.eq_ignore_ascii_case("md"));
     if !is_note {
-        return Err(format!("only notes can be deleted: {}", args.path));
+        return Err(format!("only notes can be deleted: {}", args.path).into());
     }
     let name = source.file_name().ok_or("invalid path")?.to_string_lossy().to_string();
     let trash = server.vault.root().join(".trash");
-    std::fs::create_dir_all(&trash).map_err(io_err)?;
-    let (stem, ext) = match name.rsplit_once('.') {
-        Some((s, e)) => (s.to_string(), format!(".{e}")),
-        None => (name.clone(), String::new()),
-    };
+    std::fs::create_dir_all(&trash).map_err(ToolError::io("delete"))?;
     let mut n = 0u32;
     loop {
-        let candidate =
-            if n == 0 { name.clone() } else { format!("{stem} {n}{ext}") };
-        let dest = trash.join(&candidate);
-        // A hard link fails when the destination exists, so nothing is overwritten.
-        match std::fs::hard_link(&source, &dest) {
-            Ok(()) => {
-                std::fs::remove_file(&source).map_err(io_err)?;
-                break;
-            }
+        let dest = trash.join(unique_trash_name(&name, n));
+        // Never replaces: the link fails when the destination exists.
+        match move_no_replace(&source, &dest) {
+            Ok(()) => break,
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
-            Err(e) => return Err(io_err(e)),
+            Err(e) => return Err(ToolError::io("delete")(e)),
         }
     }
     server.after_write(&args.path);
     Ok(format!("deleted {} (moved to .trash/)", args.path))
-}
-
-fn io_err(e: std::io::Error) -> String {
-    format!("delete failed: {e}")
 }
 
 #[tool_router(router = delete_router, vis = "pub(crate)")]
@@ -59,6 +55,6 @@ impl Server {
     /// Moves a note to the vault's `.trash/`. Nothing is removed from disk.
     #[tool(name = "delete_note")]
     async fn delete_note_tool(&self, args: Parameters<DeleteNoteArgs>) -> Result<String, String> {
-        delete_note(self, args.0)
+        delete_note(self, args.0).map_err(String::from)
     }
 }

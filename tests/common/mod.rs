@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
-use std::fs;
+pub mod fs;
+
 use std::path::{Path, PathBuf};
 
 use mcp_obsidian::server::{Options, Server};
@@ -22,15 +23,15 @@ impl TestVault {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("vault");
         let outside = tmp.path().join("outside");
-        fs::create_dir_all(&root).unwrap();
-        fs::create_dir_all(&outside).unwrap();
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
         TestVault { _tmp: tmp, root, outside }
     }
 
     pub fn file(&self, rel: &str, content: &str) -> &Self {
         let p = self.root.join(rel);
-        fs::create_dir_all(p.parent().unwrap()).unwrap();
-        fs::write(p, content).unwrap();
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, content).unwrap();
         self
     }
 
@@ -59,7 +60,7 @@ impl TestVault {
             .file(".obsidian/app.json", "{\"token\":\"x\"}")
             .note(".trash/deleted.md", "# deleted")
             .config("excluded_folders = [\"secret\"]\n");
-        fs::write(v.outside.join("outside-file.md"), "# outside").unwrap();
+        std::fs::write(v.outside.join("outside-file.md"), "# outside").unwrap();
         #[cfg(unix)]
         std::os::unix::fs::symlink(&v.outside, v.root.join("link")).unwrap();
         v

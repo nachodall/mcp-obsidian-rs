@@ -2,6 +2,7 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
 use serde::Deserialize;
 
+use crate::error::ToolError;
 use crate::server::Server;
 use crate::vault::{Vault, VaultError};
 
@@ -20,13 +21,13 @@ pub struct ReadNoteArgs {
 /// requested the result starts with a `[lines a-b of N]` header. Output over
 /// `max_bytes` is cut at a line boundary and ends with a notice that gives the
 /// `offset` to continue from.
-pub fn read_note(vault: &Vault, args: ReadNoteArgs, max_bytes: usize) -> Result<String, VaultError> {
+pub fn read_note(vault: &Vault, args: ReadNoteArgs, max_bytes: usize) -> Result<String, ToolError> {
     let path = vault.resolve(&args.path)?;
     if path.extension().is_none_or(|e| e != "md") {
-        return Err(VaultError::InvalidPath("only notes can be read (.md files)".into()));
+        return Err(VaultError::InvalidPath("only notes can be read (.md files)".into()).into());
     }
     if !path.is_file() {
-        return Err(VaultError::NotFound(args.path));
+        return Err(VaultError::NotFound(args.path).into());
     }
     let content = std::fs::read_to_string(&path)
         .map_err(|_| VaultError::InvalidPath("the note could not be read as text".into()))?;
@@ -74,6 +75,6 @@ impl Server {
     /// Reads a note, whole or by line range.
     #[tool(name = "read_note")]
     async fn read_note_tool(&self, args: Parameters<ReadNoteArgs>) -> Result<String, String> {
-        read_note(&self.vault, args.0, self.config.max_response_bytes).map_err(|e| e.to_string())
+        read_note(&self.vault, args.0, self.config.max_response_bytes).map_err(String::from)
     }
 }
