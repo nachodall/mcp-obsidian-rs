@@ -38,7 +38,7 @@ impl Server {
 
     /// Sum of the per-module routers. Each tool module adds one line here.
     fn tool_router() -> ToolRouter<Server> {
-        Self::list_router()
+        Self::list_router() + Self::backlinks_router()
     }
 
     pub fn config(&self) -> &Config {
