@@ -5,6 +5,7 @@ use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::{ServerHandler, tool_handler};
 
 use crate::config::Config;
+use crate::index::SearchIndex;
 use crate::vault::Vault;
 
 /// Options from the CLI.
@@ -19,6 +20,8 @@ pub struct Options {
 pub struct Server {
     pub(crate) vault: Arc<Vault>,
     pub(crate) config: Config,
+    /// In-memory search index, shared by every clone and by the write tools.
+    pub(crate) index: Arc<SearchIndex>,
     options: Options,
     tool_router: ToolRouter<Server>,
 }
@@ -28,8 +31,10 @@ impl Server {
     pub fn new(vault_root: &Path, options: Options) -> anyhow::Result<Server> {
         let config = Config::load(vault_root)?;
         let vault = Arc::new(Vault::new(vault_root, config.clone())?);
+        let index = Arc::new(SearchIndex::build(vault.clone())?);
         Ok(Server {
             vault,
+            index,
             config,
             options,
             tool_router: Self::tool_router(),
@@ -38,7 +43,7 @@ impl Server {
 
     /// Sum of the per-module routers. Each tool module adds one line here.
     fn tool_router() -> ToolRouter<Server> {
-        Self::list_router()
+        Self::list_router() + Self::search_router()
     }
 
     pub fn config(&self) -> &Config {
