@@ -63,7 +63,11 @@ impl Server {
         if options.read_only {
             router
         } else {
-            router + Self::write_router() + Self::tags_write_router() + Self::move_router()
+            router
+                + Self::write_router()
+                + Self::tags_write_router()
+                + Self::move_router()
+                + Self::delete_router()
         }
     }
 
