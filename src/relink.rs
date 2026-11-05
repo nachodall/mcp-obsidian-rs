@@ -71,11 +71,20 @@ pub fn relink_text(
     from: &str,
     to: &str,
 ) -> Option<(String, usize)> {
+    relink_text_many(text, files_before, files_after, &[(from.to_string(), to.to_string())])
+}
+
+/// Like `relink_text`, for many `(from, to)` pairs at once (a folder move).
+pub fn relink_text_many(
+    text: &str,
+    files_before: &[String],
+    files_after: &[String],
+    moves: &[(String, String)],
+) -> Option<(String, usize)> {
     let mut edits: Vec<(std::ops::Range<usize>, String)> = Vec::new();
     for link in parse_links(text) {
-        if resolve_target(&link.target, files_before).as_deref() != Some(from) {
-            continue;
-        }
+        let Some(resolved) = resolve_target(&link.target, files_before) else { continue };
+        let Some((_, to)) = moves.iter().find(|(f, _)| *f == resolved) else { continue };
         let new = new_target(&link.target, to, files_after);
         if new != link.target {
             edits.push((link.target_range.clone(), new));

@@ -67,6 +67,7 @@ impl Server {
                 + Self::write_router()
                 + Self::tags_write_router()
                 + Self::move_router()
+                + Self::move_folder_router()
                 + Self::delete_router()
         }
     }
