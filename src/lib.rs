@@ -4,6 +4,7 @@ pub mod fs_write;
 pub mod index;
 pub mod links;
 pub mod output;
+pub mod relink;
 pub mod server;
 pub mod tools;
 pub mod vault;
