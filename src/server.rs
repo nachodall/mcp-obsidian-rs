@@ -31,14 +31,20 @@ impl Server {
         Ok(Server {
             vault,
             config,
+            tool_router: Self::tool_router(&options),
             options,
-            tool_router: Self::tool_router(),
         })
     }
 
     /// Sum of the per-module routers. Each tool module adds one line here.
-    fn tool_router() -> ToolRouter<Server> {
-        Self::list_router()
+    /// Write tools are added only without `--read-only`.
+    fn tool_router(options: &Options) -> ToolRouter<Server> {
+        let router = Self::list_router();
+        if options.read_only {
+            router
+        } else {
+            router + Self::write_router()
+        }
     }
 
     pub fn config(&self) -> &Config {
