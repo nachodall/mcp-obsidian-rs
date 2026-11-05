@@ -55,7 +55,10 @@ impl Server {
     /// Sum of the per-module routers. Each tool module adds one line here.
     /// Write tools are added only without `--read-only`.
     fn tool_router(options: &Options) -> ToolRouter<Server> {
-        let router = Self::list_router() + Self::search_router() + Self::backlinks_router();
+        let router = Self::list_router()
+            + Self::read_router()
+            + Self::search_router()
+            + Self::backlinks_router();
         if options.read_only {
             router
         } else {
