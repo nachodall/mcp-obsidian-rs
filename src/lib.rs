@@ -1,4 +1,5 @@
 pub mod config;
+pub mod frontmatter;
 pub mod fs_write;
 pub mod index;
 pub mod links;
